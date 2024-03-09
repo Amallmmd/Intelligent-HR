@@ -1,0 +1,10 @@
+streamlit
+langchain
+langchain-community
+langchain-openai
+openai
+python-dotenv
+transformers
+chromadb
+spacy
+faiss-cpu
