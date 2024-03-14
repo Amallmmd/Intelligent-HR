@@ -8,3 +8,9 @@ transformers
 chromadb
 spacy
 faiss-cpu
+numpy
+pandas
+matplotlib
+PyPDF2
+pypdf
+nltk
