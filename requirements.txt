@@ -14,3 +14,4 @@ matplotlib
 PyPDF2
 pypdf
 nltk
+audio-recorder-streamlit

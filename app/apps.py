@@ -5,11 +5,13 @@ from langchain_community.callbacks import get_openai_callback
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import RetrievalQA, ConversationChain
 from langchain.prompts.prompt import PromptTemplate
-from langchain_community.chat_models import ChatOpenAI
+# from langchain_community.chat_models import ChatOpenAI
+from langchain_openai import OpenAIEmbeddings
+from langchain_openai import ChatOpenAI
 
 from prompts.prompts import Template
 from typing import Literal
-from langchain_community.embeddings import OpenAIEmbeddings
+# from langchain_community.embeddings import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain.text_splitter import NLTKTextSplitter
 from PyPDF2 import PdfReader

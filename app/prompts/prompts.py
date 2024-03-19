@@ -31,7 +31,7 @@ class Template:
                
                 Score: Give a score to the candidate out of 100.
                 
-                Sample Answers: sample answers to each of the questions in the interview guideline.
+                Sample Answers: While summarizing the conversations, try to go through each and every questions and suggest sample answer one by one.
                
                Remember, the candidate has no idea what the interview guideline is.
                Sometimes the candidate may not even answer the question.
