@@ -1,19 +1,17 @@
 from dataclasses import dataclass
 import streamlit as st
-
-from langchain_community.callbacks import get_openai_callback
+import chromadb
+import time
 from langchain.memory import ConversationBufferMemory
 from langchain.chains import RetrievalQA, ConversationChain
 from langchain.prompts.prompt import PromptTemplate
-# from langchain_community.chat_models import ChatOpenAI
 from langchain_openai import OpenAIEmbeddings
 from langchain_openai import ChatOpenAI
-
 from prompts.prompts import Template
 from typing import Literal
-# from langchain_community.embeddings import OpenAIEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain.text_splitter import NLTKTextSplitter
+from langchain_community.vectorstores import Chroma
+from langchain.retrievers import MergerRetriever
+from langchain_text_splitters import CharacterTextSplitter
 from PyPDF2 import PdfReader
 
 @dataclass
@@ -22,29 +20,70 @@ class Message:
     origin: Literal["human", "ai"]
     message: str
 
-def save_vector(resume):
-    """embeddings"""
-
+# passing resume then extract its embeddings and return into its retrieval format.
+def resume_retrieval(resume):
+    '''Create embeddings for the resume'''
+    if "resumeEmbeddings" in st.session_state and "resumeTimestamp" in st.session_state:
+        # Check if the embeddings are not too old (e.g., 1 hour)
+        if time.time() - st.session_state.resumeTimestamp < 3600:
+            return st.session_state.resumeEmbeddings
+    embeddings = OpenAIEmbeddings()    
     pdf_reader = PdfReader(resume)
     text = ""
     for page in pdf_reader.pages:
         text += page.extract_text()
-    # Split the document into chunks
-    text_splitter = NLTKTextSplitter()
-    texts = text_splitter.split_text(text)
 
+    text_splitter = CharacterTextSplitter.from_tiktoken_encoder(chunk_size=100, chunk_overlap=0)
+    resume_splitted = text_splitter.split_text(text)
+    
+    chroma_resume = Chroma.from_texts(
+        resume_splitted,embeddings,
+        collection_metadata={"hnsw:space": "cosine"} # l2 is the default (persist_directory="vector_storage/resume_store")
+    )
+    retriever_resume = chroma_resume.as_retriever(search_type = "similarity", search_kwargs = {"k":1})
+
+    # Cache the embeddings and timestamp
+    st.session_state.resumeEmbeddings = retriever_resume
+    st.session_state.resumeTimestamp = time.time()
+    return retriever_resume
+
+def jd_retrieval(jd):
+    """create embeddings for job description' """
     embeddings = OpenAIEmbeddings()
-    docsearch = FAISS.from_texts(texts, embeddings)
-    return docsearch
+    if "resumeEmbeddings" in st.session_state and "resumeTimestamp" in st.session_state:
+        # Check if the embeddings are not too old (e.g., 1 hour)
+        if time.time() - st.session_state.resumeTimestamp < 3600:
+            return st.session_state.resumeEmbeddings
+    text_splitter = CharacterTextSplitter.from_tiktoken_encoder(chunk_size=100, chunk_overlap=0)
+    jd_splitted = text_splitter.split_text(jd)
+    
+    chroma_jd = Chroma.from_texts(
+        jd_splitted,embeddings,
+        collection_metadata={"hnsw:space": "cosine"} # l2 is the default(persist_directory="vector_storage/resume_store")
+    )
+    retriever_jd = chroma_jd.as_retriever(search_type = "similarity", search_kwargs = {"k":1})
+     # Cache the embeddings and timestamp
+    st.session_state.resumeEmbeddings = retriever_jd
+    st.session_state.resumeTimestamp = time.time()
+    return retriever_jd
 
-def initialize_session_state_resume(resume):
+
+def initialize_session_state_resume(resume,input_text):
+
+     # Check if resume and job description are not empty
+    if not resume or not input_text:
+        raise ValueError("Resume and job description text must not be empty.")
     # convert resume to embeddings
-    if 'docsearch' not in st.session_state:
-        st.session_state.docsearch = save_vector(resume)
-    # retriever for resume screen
-    if 'retriever' not in st.session_state:
-        st.session_state.retriever = st.session_state.docsearch.as_retriever(search_type="similarity")
-   
+    if "resumeRetriever" not in st.session_state:
+        st.session_state.resumeRetriever = resume_retrieval(resume)
+    if "jdRetriever" not in st.session_state:
+        st.session_state.jdRetriever = jd_retrieval(input_text)
+    if 'merger' not in st.session_state:
+        st.session_state.merger = MergerRetriever(retrievers=[st.session_state.resumeRetriever, st.session_state.jdRetriever]) 
+    if "job_chain_type_kwargs" not in st.session_state:
+        interview_prompt = PromptTemplate(input_variables=["context","question"],
+                                          template=Template.jd_template)
+        st.session_state.job_chain_type_kwargs = {"prompt": interview_prompt}
     if "resume_history" not in st.session_state:
         st.session_state.resume_history = []
         st.session_state.resume_history.append(Message(origin="ai", message="Hello, I am your interivewer today. I will ask you some questions regarding your resume and your experience. Please start by saying hello or introducing yourself. Note: The maximum length of your answer is 4097 tokens!"))
@@ -61,9 +100,9 @@ def initialize_session_state_resume(resume):
         temperature = 0.5,)
         st.session_state.resume_guideline = RetrievalQA.from_chain_type(
             llm=llm,
-            chain_type_kwargs={},
+            chain_type_kwargs=st.session_state.job_chain_type_kwargs,
             chain_type='stuff',
-            retriever=st.session_state.retriever, 
+            retriever=st.session_state.merger, 
             memory = st.session_state.resume_memory).run("Create an interview guideline and prepare only two questions for each topic. Make sure the questions tests the knowledge")
     # llm chain for resume screen
     if "resume_screen" not in st.session_state:
@@ -95,16 +134,24 @@ def initialize_session_state_resume(resume):
 
 
 # st.sidebar.success("Select a demo above.")
-st.set_page_config(page_title="Test YOU")
-
-def main_page():
-    st.title("AI Interviewer")
+st.set_page_config(page_title="AI-hr")
+def main():
+    st.title("Intelligent HR")
     resume = st.file_uploader("Upload your resume", type=["pdf"])
-
-
     if resume is not None:
-        initialize_session_state_resume(resume)
+        st.session_state.resume = resume
+        st.success("Resume uploaded successfully.")
 
+    job_desc = st.text_area("Provide a brief description here", value=st.session_state.input_text if "input_text" in st.session_state else "")
+    if job_desc:
+        st.session_state.input_text = job_desc
+        st.success("Job description saved.")
+
+    # Submit button to start the interview simulation
+    button = st.button("Submit")
+    if button or "resume" in st.session_state and "input_text" in st.session_state:
+        initialize_session_state_resume(st.session_state.resume, st.session_state.input_text)
+         # Start the interview simulation
         for message in st.session_state.resume_history:
             with st.chat_message(message.origin):
                 st.markdown(message.message)
@@ -113,11 +160,9 @@ def main_page():
             # Display user message in chat message container
             with st.chat_message("human"):
                 st.markdown(user_input)
-            
-            # Add user message to chat history
+             # Add user message to chat history
             st.session_state.resume_history.append(Message(origin="human", message=user_input))
             st.session_state.token_count += len(user_input.split())
-
 
             # Generate bot response
             bot_response = st.session_state.resume_screen.run(user_input)
@@ -125,10 +170,12 @@ def main_page():
             # Display assistant response in chat message container
             with st.chat_message("assistant"):
                 st.markdown(f"Bot: {bot_response}")
-
+            
             # Add assistant response to chat history
             st.session_state.resume_history.append(Message(origin="ai", message=bot_response))
-        
+    else:
+        st.warning("Please upload your resume and provide a job description before submitting.")
 
+# call the function
 if __name__ == "__main__":
-    main_page()
+    main()
