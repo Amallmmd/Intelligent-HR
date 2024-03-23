@@ -100,15 +100,22 @@ def behaviour_test(text:str):# take arguments (short description and no. of ques
             prompt=PromptTemplate(input_variables = ["history", "input"], template = Template.feedback_template),
             llm=llm,
             memory = st.session_state.memory,
-
         )
 def show_feedback():
-    if "feedback" in st.session_state:
-        feedback_response = st.session_state.feedback.run(
-            "please give evalution regarding the interview"
+    if "feedback" not in st.session_state:
+        llm = ChatOpenAI(
+        model_name = "gpt-3.5-turbo",
+        temperature = 0.5,)
+        st.session_state.feedback = ConversationChain(
+            prompt=PromptTemplate(input_variables = ["history", "input"], template = Template.feedback_template),
+            llm=llm,
+            memory = st.session_state.memory,
         )
-        with st.expander("Evaluation"):
-            st.write(feedback_response)
+    feedback_response = st.session_state.feedback.run(
+        "please give evalution based on the given prompt"
+    )
+    with st.expander("Evaluation"):
+        st.write(feedback_response)
 def main():
     st.title("Ready to test your soft skills")
 

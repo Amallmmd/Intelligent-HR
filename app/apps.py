@@ -99,11 +99,11 @@ st.set_page_config(page_title="Test YOU")
 
 def main_page():
     st.title("AI Interviewer")
-    resume = st.file_uploader("Upload your resume", type=["pdf"])
+    resumes = st.file_uploader("Upload your resume")
 
 
-    if resume is not None:
-        initialize_session_state_resume(resume)
+    if resumes is not None:
+        initialize_session_state_resume(resumes)
 
         for message in st.session_state.resume_history:
             with st.chat_message(message.origin):
@@ -120,7 +120,7 @@ def main_page():
 
 
             # Generate bot response
-            bot_response = st.session_state.resume_screen.run(user_input)
+            bot_response = st.session_state.resume_screen.invoke(user_input)
 
             # Display assistant response in chat message container
             with st.chat_message("assistant"):
