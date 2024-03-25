@@ -155,7 +155,15 @@ def initialize_session_state_resume(input_text,resume):
             Candidate: {input}
             AI: """)
         st.session_state.resume_screen = ConversationChain(prompt=PROMPT, llm = llm, memory = st.session_state.resume_memory)
- 
+    if "feedback" not in st.session_state:
+        llm = ChatOpenAI(
+        model_name = "gpt-3.5-turbo",
+        temperature = 0.5,)
+        st.session_state.feedback = ConversationChain(
+            prompt=PromptTemplate(input_variables = ["history", "input"], template = Template.feedback_template),
+            llm=llm,
+            memory = st.session_state.resume_memory,
+        )
 # function to define the feedback of the interview
 def show_feedback():
     if "feedback" in st.session_state:
@@ -190,7 +198,7 @@ def main():
             #record audio input
             audio_bytes = audio_recorder(
                 pause_threshold=2.0, sample_rate=41_000,
-                text="Click to Record",
+                text="Click",
                 recording_color="#fffff",
                 neutral_color="#6aa36f",
                 icon_name="user",
@@ -244,10 +252,11 @@ def main():
                 
                 # Add assistant response to chat history
                 st.session_state.resume_history.append(Message(origin="ai", message=bot_response))
-    
+
     else:
         st.warning("Please upload your resume and provide a job description before submitting.")
-
+    if st.button("Show feedback"):
+        show_feedback()
 # call the function
 if __name__ == "__main__":
     main()
