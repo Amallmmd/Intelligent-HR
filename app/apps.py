@@ -13,12 +13,55 @@ from langchain_community.vectorstores import Chroma
 from langchain.retrievers import MergerRetriever
 from langchain_text_splitters import CharacterTextSplitter
 from PyPDF2 import PdfReader
+import streamlit as st
+from audio_recorder_streamlit import audio_recorder
+from openai import OpenAI
+import os
+client = OpenAI()
+api_key = os.getenv("OPENAI_API_KEY")
+
+def speech_to_text(audiofile):
+    client = OpenAI(api_key=api_key)
+    audio_file= open(audiofile, "rb")
+    transcription = client.audio.transcriptions.create(
+    model="whisper-1", 
+    file=audio_file
+    )
+    return transcription.text
+def text_to_speech(speech_file_path,chat_format):
+    client = OpenAI(api_key=api_key)
+    response = client.audio.speech.create(
+    model="tts-1",
+    voice="echo",
+    input=chat_format
+    )
+    response.stream_to_file(speech_file_path)
 
 @dataclass
 class Message:
     """Class for keeping track of interview history."""
     origin: Literal["human", "ai"]
     message: str
+def jd_retrieval(jd):
+    """create embeddings for job description"""
+    embeddings = OpenAIEmbeddings()
+    if "resumeEmbeddings" in st.session_state and "resumeTimestamp" in st.session_state:
+        # Check if the embeddings are not too old (e.g., 1 hour)
+        if time.time() - st.session_state.resumeTimestamp < 3600:
+            return st.session_state.resumeEmbeddings
+    text_splitter = CharacterTextSplitter.from_tiktoken_encoder(chunk_size=100, chunk_overlap=0)
+    jd_splitted = text_splitter.split_text(jd)
+    
+    chroma_jd = Chroma.from_texts(
+        jd_splitted,embeddings,
+        collection_metadata={"hnsw:space": "cosine"} # l2 is the default(persist_directory="vector_storage/resume_store")
+    )
+    retriever_jd = chroma_jd.as_retriever(search_type = "similarity", search_kwargs = {"k":2})
+     # Cache the embeddings and timestamp
+    st.session_state.resumeEmbeddings = retriever_jd
+    st.session_state.resumeTimestamp = time.time()
+    return retriever_jd
+
 
 # passing resume then extract its embeddings and return into its retrieval format.
 def resume_retrieval(resume):
@@ -40,46 +83,27 @@ def resume_retrieval(resume):
         resume_splitted,embeddings,
         collection_metadata={"hnsw:space": "cosine"} # l2 is the default (persist_directory="vector_storage/resume_store")
     )
-    retriever_resume = chroma_resume.as_retriever(search_type = "similarity", search_kwargs = {"k":1})
+    retriever_resume = chroma_resume.as_retriever(search_type = "similarity", search_kwargs = {"k":2})
 
     # Cache the embeddings and timestamp
     st.session_state.resumeEmbeddings = retriever_resume
     st.session_state.resumeTimestamp = time.time()
     return retriever_resume
 
-def jd_retrieval(jd):
-    """create embeddings for job description' """
-    embeddings = OpenAIEmbeddings()
-    if "resumeEmbeddings" in st.session_state and "resumeTimestamp" in st.session_state:
-        # Check if the embeddings are not too old (e.g., 1 hour)
-        if time.time() - st.session_state.resumeTimestamp < 3600:
-            return st.session_state.resumeEmbeddings
-    text_splitter = CharacterTextSplitter.from_tiktoken_encoder(chunk_size=100, chunk_overlap=0)
-    jd_splitted = text_splitter.split_text(jd)
-    
-    chroma_jd = Chroma.from_texts(
-        jd_splitted,embeddings,
-        collection_metadata={"hnsw:space": "cosine"} # l2 is the default(persist_directory="vector_storage/resume_store")
-    )
-    retriever_jd = chroma_jd.as_retriever(search_type = "similarity", search_kwargs = {"k":1})
-     # Cache the embeddings and timestamp
-    st.session_state.resumeEmbeddings = retriever_jd
-    st.session_state.resumeTimestamp = time.time()
-    return retriever_jd
 
-
-def initialize_session_state_resume(resume,input_text):
+def initialize_session_state_resume(input_text,resume):
 
      # Check if resume and job description are not empty
     if not resume or not input_text:
         raise ValueError("Resume and job description text must not be empty.")
+    
+    if "jdRetriever" not in st.session_state:
+        st.session_state.jdRetriever = jd_retrieval(input_text)
     # convert resume to embeddings
     if "resumeRetriever" not in st.session_state:
         st.session_state.resumeRetriever = resume_retrieval(resume)
-    if "jdRetriever" not in st.session_state:
-        st.session_state.jdRetriever = jd_retrieval(input_text)
     if 'merger' not in st.session_state:
-        st.session_state.merger = MergerRetriever(retrievers=[st.session_state.resumeRetriever, st.session_state.jdRetriever]) 
+        st.session_state.merger = MergerRetriever(retrievers=[st.session_state.jdRetriever,st.session_state.resumeRetriever]) 
     if "job_chain_type_kwargs" not in st.session_state:
         interview_prompt = PromptTemplate(input_variables=["context","question"],
                                           template=Template.jd_template)
@@ -120,7 +144,7 @@ def initialize_session_state_resume(resume,input_text):
             Do not ask the same question.
             Do not repeat the question.
             Candidate has no assess to the guideline.
-            You name is GPTInterviewer.
+            You name is Intelligent HR.
             I want you to only reply as an interviewer.
             Do not write all the conversation at once.
             Candiate has no assess to the guideline.
@@ -130,49 +154,97 @@ def initialize_session_state_resume(resume,input_text):
             
             Candidate: {input}
             AI: """)
-        st.session_state.resume_screen =  ConversationChain(prompt=PROMPT, llm = llm, memory = st.session_state.resume_memory)
-
+        st.session_state.resume_screen = ConversationChain(prompt=PROMPT, llm = llm, memory = st.session_state.resume_memory)
+ 
+# function to define the feedback of the interview
+def show_feedback():
+    if "feedback" in st.session_state:
+        feedback_response = st.session_state.feedback.run(
+            "please give evalution regarding the interview"
+        )
+        with st.expander("Evaluation"):
+            st.write(feedback_response)
 
 # st.sidebar.success("Select a demo above.")
 st.set_page_config(page_title="AI-hr")
+st.title("Intelligent HR")
 def main():
-    st.title("Intelligent HR")
+    
+    job_desc = st.text_area("Provide a brief description here", value=st.session_state.input_text if "input_text" in st.session_state else "")
+    if job_desc:
+        st.session_state.input_text = job_desc
+        st.success("Job description saved.")
+    
     resume = st.file_uploader("Upload your resume", type=["pdf"])
     if resume is not None:
         st.session_state.resume = resume
         st.success("Resume uploaded successfully.")
 
-    job_desc = st.text_area("Provide a brief description here", value=st.session_state.input_text if "input_text" in st.session_state else "")
-    if job_desc:
-        st.session_state.input_text = job_desc
-        st.success("Job description saved.")
-
     # Submit button to start the interview simulation
     button = st.button("Submit")
     if button or "resume" in st.session_state and "input_text" in st.session_state:
-        initialize_session_state_resume(st.session_state.resume, st.session_state.input_text)
-         # Start the interview simulation
-        for message in st.session_state.resume_history:
-            with st.chat_message(message.origin):
-                st.markdown(message.message)
+        initialize_session_state_resume(st.session_state.input_text,st.session_state.resume)
+        
+        agree = st.checkbox("Access the Voice Assistant")
+        if agree:
+            #record audio input
+            audio_bytes = audio_recorder(
+                pause_threshold=2.0, sample_rate=41_000,
+                text="Click to Record",
+                recording_color="#fffff",
+                neutral_color="#6aa36f",
+                icon_name="user",
+                icon_size="4x",
+                )
+            for message in st.session_state.resume_history:
+                with st.chat_message(message.origin):
+                    st.markdown(message.message)
+  
+            if audio_bytes:
+                audio_input = "audiofile.wav"
+                with open(audio_input,"wb") as f:
+                    f.write(audio_bytes)
 
-        if user_input := st.chat_input("Chat with me!"):
-            # Display user message in chat message container
-            with st.chat_message("human"):
-                st.markdown(user_input)
-             # Add user message to chat history
-            st.session_state.resume_history.append(Message(origin="human", message=user_input))
-            st.session_state.token_count += len(user_input.split())
+                #convert speech to text
+                user_input = speech_to_text(audio_input)
+                with st.chat_message("human"):
+                    st.markdown(user_input)
+                    st.session_state.resume_history.append(Message(origin="human", message=user_input))
+                    st.session_state.token_count += len(user_input.split())
+                st.audio(audio_bytes, format="audio/wav")
+                # generate bot response
+                bot_response = st.session_state.resume_screen.run(user_input)
+                with st.chat_message("assistant"):
+                    st.markdown(f"Bot: {bot_response}")
+                    st.session_state.resume_history.append(Message(origin="ai", message=bot_response))
+                # convert text to speech
+                audio_output = "audiofileout.wav"
+                text_to_speech(speech_file_path=audio_output,chat_format=bot_response)
+                st.audio(audio_output) 
+        else:
+        
+            for message in st.session_state.resume_history:
+                with st.chat_message(message.origin):
+                    st.markdown(message.message)
 
-            # Generate bot response
-            bot_response = st.session_state.resume_screen.run(user_input)
+            if user_input := st.chat_input("Chat with me!"):
+                # Display user message in chat message container
+                with st.chat_message("human"):
+                    st.markdown(user_input)
+                # Add user message to chat history
+                st.session_state.resume_history.append(Message(origin="human", message=user_input))
+                st.session_state.token_count += len(user_input.split())
 
-            # Display assistant response in chat message container
-            with st.chat_message("assistant"):
-                st.markdown(f"Bot: {bot_response}")
-            
-            # Add assistant response to chat history
-            st.session_state.resume_history.append(Message(origin="ai", message=bot_response))
+                # Generate bot response
+                bot_response = st.session_state.resume_screen.run(user_input)
+
+                # Display assistant response in chat message container
+                with st.chat_message("assistant"):
+                    st.markdown(f"Bot: {bot_response}")
+                
+                # Add assistant response to chat history
+                st.session_state.resume_history.append(Message(origin="ai", message=bot_response))
+    
     else:
         st.warning("Please upload your resume and provide a job description before submitting.")
 
