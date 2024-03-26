@@ -126,21 +126,19 @@ def main():
             with st.chat_message(message.origin):
                 st.markdown(message.message)
         
-        
+# if "conversation" in st.session_state:    
+    if user_input:= st.chat_input("Chat:"):
+        with st.chat_message("human"):
+            st.markdown(user_input)
 
-    if "conversation" in st.session_state:    
-        if user_input:= st.chat_input("Chat:"):
-            with st.chat_message("human"):
-                st.markdown(user_input)
+        st.session_state.b_history.append(Message(origin="human", message=user_input))
+        bot_response = st.session_state.conversation.run(user_input)
 
-            st.session_state.b_history.append(Message(origin="human", message=user_input))
-            bot_response = st.session_state.conversation.run(user_input)
-
-            with st.chat_message("assistant"):
-                st.markdown(f"Bot: {bot_response}")
-            st.session_state.b_history.append(Message(origin="ai", message=bot_response))
-        if st.button("Show feedback"):
-            show_feedback()
+        with st.chat_message("assistant"):
+            st.markdown(f"Bot: {bot_response}")
+        st.session_state.b_history.append(Message(origin="ai", message=bot_response))
+    if st.button("Show feedback"):
+        show_feedback()
 
 if __name__ == "__main__":
     main()
